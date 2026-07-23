@@ -20,6 +20,21 @@
 브라우저는 Nextcloud에 직접 요청하지 않습니다. 인증 정보와 파일 작업은
 항상 서버 경계를 통과합니다.
 
+## 탐색기 기능
+
+- 클릭, `Ctrl`/`Cmd`, `Shift` 또는 빈 공간의 선택 사각형으로 여러 항목을
+  선택할 수 있습니다.
+- 선택한 파일과 폴더를 다른 폴더나 breadcrumb로 끌어서 이동할 수 있습니다.
+- 운영체제에서 여러 파일을 끌어 놓거나 업로드 창에서 동시에 선택할 수
+  있습니다.
+- 이미지, 텍스트, PDF, JSON/XML, 오디오와 비디오를 인증된 스트리밍
+  엔드포인트로 미리 봅니다.
+- 삭제 요청은 Nextcloud 휴지통으로 이동하며 휴지통 조회와 비우기를
+  지원합니다.
+- 폴더는 `/browse/폴더명/...` URL을 사용하므로 브라우저 뒤로가기와
+  새로고침 후 경로 복원이 동작합니다. 폴더별 DNS 서브도메인은 만들지
+  않으므로 Cloudflare 와일드카드 DNS 설정이 필요하지 않습니다.
+
 ## 로컬 실행
 
 Node.js 22 이상을 권장합니다.
@@ -101,8 +116,11 @@ docker compose up --build -d
 | `POST` | `/api/files/folders` | 폴더 생성 |
 | `PATCH` | `/api/files/rename` | 이름 변경 |
 | `PATCH` | `/api/files/move` | 파일 또는 폴더 이동 |
-| `DELETE` | `/api/files/delete?path=` | 삭제 |
+| `DELETE` | `/api/files/delete?path=` | Nextcloud 휴지통으로 이동 |
 | `GET` | `/api/files/download?path=` | 다운로드 |
+| `GET` | `/api/files/preview?path=` | 지원 파일 형식 스트리밍 미리보기 |
+| `GET` | `/api/trash` | 휴지통 목록 |
+| `DELETE` | `/api/trash` | 휴지통 영구 비우기 |
 
 경로는 저장소 루트 기준 상대 경로만 허용합니다. 절대 경로, `.`/`..`,
 역슬래시, 제어문자, 반복 URL 인코딩을 이용한 경로 이탈은 거부합니다.
@@ -118,9 +136,10 @@ npm run build
 
 ## WebDAV 동작
 
-어댑터는 폴더 조회에 `PROPFIND`, 다운로드에 `GET`, 업로드에 `PUT`, 폴더
-생성에 `MKCOL`, 이름 변경과 이동에 `MOVE`, 삭제에 `DELETE`를 사용합니다.
-업로드와 다운로드 본문은 스트리밍하며 업로드 스트림에는
+어댑터는 폴더와 Nextcloud 공식 trashbin 조회에 `PROPFIND`, 다운로드와
+미리보기에 `GET`, 업로드에 `PUT`, 폴더 생성에 `MKCOL`, 이름 변경과
+이동에 `MOVE`, 휴지통 이동과 비우기에 `DELETE`를 사용합니다. 업로드,
+다운로드, 미리보기 본문은 스트리밍하며 업로드 스트림에는
 `MAX_UPLOAD_BYTES` 제한을 적용합니다.
 
 모든 경로는 저장소 루트 기준 상대 경로로 검증한 뒤 각 segment를 별도로

@@ -88,6 +88,7 @@ const INITIAL_ITEMS: ArchiveItem[] = [
 
 declare global {
   var __fArchiveMockItems: Map<string, ArchiveItem> | undefined;
+  var __fArchiveMockTrashItems: Map<string, ArchiveItem> | undefined;
 }
 
 function getItems(): Map<string, ArchiveItem> {
@@ -97,6 +98,13 @@ function getItems(): Map<string, ArchiveItem> {
     );
   }
   return globalThis.__fArchiveMockItems;
+}
+
+function getTrashItems(): Map<string, ArchiveItem> {
+  if (!globalThis.__fArchiveMockTrashItems) {
+    globalThis.__fArchiveMockTrashItems = new Map();
+  }
+  return globalThis.__fArchiveMockTrashItems;
 }
 
 function cloneItem(item: ArchiveItem): ArchiveItem {
@@ -257,12 +265,34 @@ export class MockArchiveStorage implements ArchiveStorage {
     if (!path) {
       throw new ArchiveStorageError(400, "root_protected", "루트는 삭제할 수 없습니다.");
     }
-    requireExisting(path);
+    const existing = requireExisting(path);
+    const deletedAt = new Date().toISOString();
+    const trashPath = `trash/${Date.now()}-${getTrashItems().size}`;
+    getTrashItems().set(trashPath, {
+      ...existing,
+      path: trashPath,
+      modifiedAt: deletedAt,
+    });
     for (const candidate of [...getItems().keys()]) {
       if (candidate === path || isDescendantPath(candidate, path)) {
         getItems().delete(candidate);
       }
     }
+  }
+
+  async listTrash(): Promise<ArchiveListing> {
+    return {
+      path: "",
+      items: [...getTrashItems().values()]
+        .sort((left, right) =>
+          right.modifiedAt.localeCompare(left.modifiedAt),
+        )
+        .map(cloneItem),
+    };
+  }
+
+  async emptyTrash(): Promise<void> {
+    getTrashItems().clear();
   }
 
   async download(pathInput: string): Promise<DownloadResult> {

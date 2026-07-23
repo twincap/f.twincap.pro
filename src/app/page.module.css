@@ -566,13 +566,21 @@
   padding: 14px 18px;
 }
 
+.selectionAction {
+  background: transparent;
+  border: 0;
+  color: var(--rust);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+}
+
 .tableHeader,
 .fileRow {
   display: grid;
-  grid-template-columns: minmax(260px, 1.6fr) minmax(80px, 0.45fr) minmax(
-      165px,
-      0.75fr
-    ) 116px;
+  grid-template-columns:
+    34px minmax(220px, 1.6fr) minmax(80px, 0.45fr)
+    minmax(165px, 0.75fr) 150px;
 }
 
 .tableHeader {
@@ -592,6 +600,7 @@
   min-height: 68px;
   padding: 8px 18px;
   transition: background 140ms ease;
+  user-select: none;
 }
 
 .fileRow:last-child {
@@ -600,6 +609,27 @@
 
 .fileRow:hover {
   background: #faf9f6;
+}
+
+.fileRowSelected {
+  background: #edf3ee;
+  box-shadow: inset 3px 0 0 var(--forest);
+}
+
+.fileRowSelected:hover {
+  background: #e8f0e9;
+}
+
+.fileRowDropTarget {
+  background: #f5ead3;
+  box-shadow: inset 0 0 0 2px #c39a53;
+}
+
+.selectionCheckbox {
+  accent-color: var(--forest);
+  cursor: pointer;
+  height: 15px;
+  width: 15px;
 }
 
 .fileName {
@@ -611,11 +641,6 @@
   gap: 12px;
   min-width: 0;
   text-align: left;
-}
-
-.fileName:disabled {
-  color: inherit;
-  cursor: default;
 }
 
 .fileName > span:last-child {
@@ -680,6 +705,20 @@
   justify-content: flex-end;
 }
 
+.fileList {
+  min-height: 260px;
+  position: relative;
+  touch-action: pan-y;
+}
+
+.selectionBox {
+  background: rgba(54, 104, 76, 0.12);
+  border: 1px solid rgba(42, 88, 62, 0.55);
+  pointer-events: none;
+  position: absolute;
+  z-index: 4;
+}
+
 .emptyState {
   align-items: center;
   color: #9a9e9a;
@@ -720,6 +759,70 @@
   box-shadow: 0 24px 80px rgba(13, 25, 19, 0.22);
   max-width: 440px;
   padding: 24px;
+  width: 100%;
+}
+
+.previewDialog {
+  background: #171b18;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(13, 25, 19, 0.32);
+  display: flex;
+  flex-direction: column;
+  height: min(86vh, 900px);
+  max-width: 1120px;
+  overflow: hidden;
+  width: min(92vw, 1120px);
+}
+
+.previewDialog header {
+  align-items: center;
+  background: var(--white);
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+
+.previewDialog h2 {
+  font-size: 15px;
+  margin-top: 5px;
+  max-width: min(65vw, 760px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewActions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.previewContent {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+
+.previewContent img,
+.previewContent video {
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.previewContent audio {
+  max-width: 680px;
+  width: 80%;
+}
+
+.previewContent iframe {
+  background: white;
+  border: 0;
+  height: 100%;
   width: 100%;
 }
 
@@ -814,7 +917,7 @@
   }
 
   .fileRow {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
   }
 
   .fileSize,
@@ -899,5 +1002,10 @@
 
   .dialog {
     padding: 20px;
+  }
+
+  .previewDialog {
+    height: 92vh;
+    width: 96vw;
   }
 }

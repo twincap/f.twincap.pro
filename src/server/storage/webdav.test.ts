@@ -41,10 +41,13 @@ function multiStatus(
     folder?: boolean;
     href: string;
     modifiedAt?: string;
+    trashDeletedAt?: string;
+    trashName?: string;
+    trashOriginalLocation?: string;
   }>,
 ): string {
   return `<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:">
+<d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">
   ${entries
     .map(
       (entry) => `<d:response>
@@ -55,6 +58,9 @@ function multiStatus(
         ${entry.contentLength === undefined ? "" : `<d:getcontentlength>${entry.contentLength}</d:getcontentlength>`}
         ${entry.contentType ? `<d:getcontenttype>${entry.contentType}</d:getcontenttype>` : ""}
         <d:getlastmodified>${entry.modifiedAt ?? "Wed, 23 Jul 2026 10:00:00 GMT"}</d:getlastmodified>
+        ${entry.trashName ? `<nc:trashbin-filename>${entry.trashName}</nc:trashbin-filename>` : ""}
+        ${entry.trashOriginalLocation ? `<nc:trashbin-original-location>${entry.trashOriginalLocation}</nc:trashbin-original-location>` : ""}
+        ${entry.trashDeletedAt ? `<nc:trashbin-deletion-time>${entry.trashDeletedAt}</nc:trashbin-deletion-time>` : ""}
       </d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
@@ -314,6 +320,57 @@ describe("WebDAV operations", () => {
     expect(
       new Headers(moveRequests[0].init?.headers).get("Overwrite"),
     ).toBe("F");
+  });
+
+  it("lists and empties the official Nextcloud trashbin", async () => {
+    const deletedAt = 1_784_764_800;
+    const trashedName = "보고서.pdf";
+    const remoteName = `${trashedName}.d${deletedAt}`;
+    const { fetchImpl, requests } = createFetchQueue([
+      xmlResponse(
+        multiStatus([
+          {
+            href: "/remote.php/dav/trashbin/archive-user/trash/",
+            folder: true,
+          },
+          {
+            href: `/remote.php/dav/trashbin/archive-user/trash/${encodeURIComponent(remoteName)}`,
+            contentLength: 5_120,
+            contentType: "application/pdf",
+            trashDeletedAt: String(deletedAt),
+            trashName: trashedName,
+            trashOriginalLocation: `기록/${trashedName}`,
+          },
+        ]),
+      ),
+      new Response(null, { status: 204 }),
+    ]);
+    const storage = new WebDavArchiveStorage(environment, fetchImpl);
+
+    const trash = await storage.listTrash();
+    await storage.emptyTrash();
+
+    expect(trash).toEqual({
+      path: "",
+      items: [
+        {
+          path: remoteName,
+          name: trashedName,
+          type: "file",
+          size: 5_120,
+          modifiedAt: new Date(deletedAt * 1000).toISOString(),
+          contentType: "application/pdf",
+        },
+      ],
+    });
+    expect(requests.map((request) => request.init?.method)).toEqual([
+      "PROPFIND",
+      "DELETE",
+    ]);
+    expect(requests[0].url).toBe(
+      "https://files.twincap.pro/remote.php/dav/trashbin/archive-user/trash/",
+    );
+    expect(requests[1].url).toBe(requests[0].url);
   });
 });
 

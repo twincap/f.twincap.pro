@@ -4,6 +4,7 @@ import {
   Archive,
   ChevronRight,
   Download,
+  Eye,
   File as FileIcon,
   Folder,
   FolderOpen,
@@ -17,7 +18,17 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type DragEvent,
+  type FormEvent,
+  type MouseEvent,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   ApiErrorBody,
@@ -33,13 +44,23 @@ type AuthState =
   | { status: "authenticated"; user: SessionUser };
 
 type StorageDriver = "mock" | "webdav";
+type ViewMode = "files" | "trash";
+type PreviewKind = "audio" | "document" | "image" | "video";
 
 type DialogState =
   | { type: "folder" }
   | { type: "upload" }
   | { type: "rename"; item: ArchiveItem }
-  | { type: "delete"; item: ArchiveItem }
+  | { type: "delete"; items: ArchiveItem[] }
+  | { type: "empty-trash" }
   | null;
+
+interface SelectionBox {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+}
 
 const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
   dateStyle: "medium",
@@ -72,6 +93,94 @@ function getFileIcon(item: ArchiveItem) {
     return <ImageIcon className={styles.imageIcon} aria-hidden="true" />;
   }
   return <FileIcon className={styles.fileIcon} aria-hidden="true" />;
+}
+
+function getPreviewKind(item: ArchiveItem): PreviewKind | null {
+  if (item.type !== "file") {
+    return null;
+  }
+  const contentType = item.contentType?.split(";", 1)[0].toLowerCase() ?? "";
+  const extension = item.name.split(".").pop()?.toLowerCase() ?? "";
+  if (
+    contentType.startsWith("image/") ||
+    ["avif", "bmp", "gif", "heic", "jpeg", "jpg", "png", "svg", "webp"].includes(
+      extension,
+    )
+  ) {
+    return "image";
+  }
+  if (
+    contentType.startsWith("audio/") ||
+    ["aac", "flac", "m4a", "mp3", "ogg", "wav"].includes(extension)
+  ) {
+    return "audio";
+  }
+  if (
+    contentType.startsWith("video/") ||
+    ["m4v", "mov", "mp4", "ogv", "webm"].includes(extension)
+  ) {
+    return "video";
+  }
+  if (
+    contentType.startsWith("text/") ||
+    ["application/json", "application/pdf", "application/xml"].includes(
+      contentType,
+    ) ||
+    contentType.endsWith("+json") ||
+    contentType.endsWith("+xml") ||
+    [
+      "css",
+      "csv",
+      "html",
+      "ini",
+      "js",
+      "json",
+      "log",
+      "md",
+      "pdf",
+      "toml",
+      "ts",
+      "tsx",
+      "txt",
+      "xml",
+      "yaml",
+      "yml",
+    ].includes(extension)
+  ) {
+    return "document";
+  }
+  return null;
+}
+
+function browseUrl(path: string): string {
+  if (!path) {
+    return "/";
+  }
+  return `/browse/${path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+}
+
+function locationTarget(): { mode: ViewMode; path: string } {
+  if (window.location.pathname === "/trash") {
+    return { mode: "trash", path: "" };
+  }
+  if (window.location.pathname.startsWith("/browse/")) {
+    try {
+      return {
+        mode: "files",
+        path: window.location.pathname
+          .slice("/browse/".length)
+          .split("/")
+          .map((segment) => decodeURIComponent(segment))
+          .join("/"),
+      };
+    } catch {
+      return { mode: "files", path: "" };
+    }
+  }
+  return { mode: "files", path: "" };
 }
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -229,7 +338,8 @@ function ActionDialog({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const isDelete = dialog.type === "delete";
+  const isDelete =
+    dialog.type === "delete" || dialog.type === "empty-trash";
   const title =
     dialog.type === "folder"
       ? "새 폴더"
@@ -237,7 +347,9 @@ function ActionDialog({
         ? "파일 업로드"
         : dialog.type === "rename"
           ? "이름 변경"
-          : "항목 삭제";
+          : dialog.type === "empty-trash"
+            ? "휴지통 비우기"
+            : "휴지통으로 이동";
 
   return (
     <div className={styles.dialogBackdrop} role="presentation">
@@ -284,15 +396,31 @@ function ActionDialog({
           {dialog.type === "upload" ? (
             <label>
               업로드할 파일
-              <input autoFocus name="file" required type="file" />
+              <input autoFocus multiple name="file" required type="file" />
             </label>
           ) : null}
-          {isDelete ? (
+          {dialog.type === "delete" ? (
             <p className={styles.deleteMessage}>
-              <strong>{dialog.item.name}</strong>을(를) 삭제할까요?
-              {dialog.item.type === "folder"
-                ? " 폴더 안의 항목도 함께 삭제됩니다."
-                : " 이 작업은 되돌릴 수 없습니다."}
+              {dialog.items.length === 1 ? (
+                <>
+                  <strong>{dialog.items[0].name}</strong>을(를) 휴지통으로
+                  이동할까요?
+                </>
+              ) : (
+                <>
+                  선택한 <strong>{dialog.items.length}개 항목</strong>을
+                  휴지통으로 이동할까요?
+                </>
+              )}
+              {dialog.items.some((item) => item.type === "folder")
+                ? " 폴더 안의 항목도 함께 이동됩니다."
+                : null}
+            </p>
+          ) : null}
+          {dialog.type === "empty-trash" ? (
+            <p className={styles.deleteMessage}>
+              휴지통의 모든 항목을 영구 삭제할까요? 이 작업은 되돌릴 수
+              없습니다.
             </p>
           ) : null}
 
@@ -310,10 +438,79 @@ function ActionDialog({
               disabled={busy}
               type="submit"
             >
-              {busy ? "처리 중…" : isDelete ? "삭제" : "확인"}
+              {busy
+                ? "처리 중…"
+                : dialog.type === "empty-trash"
+                  ? "영구 삭제"
+                  : dialog.type === "delete"
+                    ? "휴지통으로 이동"
+                    : "확인"}
             </button>
           </div>
         </form>
+      </section>
+    </div>
+  );
+}
+
+function PreviewDialog({
+  item,
+  kind,
+  onClose,
+}: {
+  item: ArchiveItem;
+  kind: PreviewKind;
+  onClose: () => void;
+}) {
+  const previewUrl = `/api/files/preview?path=${encodeURIComponent(item.path)}`;
+  return (
+    <div className={styles.dialogBackdrop} role="presentation">
+      <section
+        aria-labelledby="preview-title"
+        aria-modal="true"
+        className={styles.previewDialog}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <p className={styles.eyebrow}>FILE PREVIEW</p>
+            <h2 id="preview-title">{item.name}</h2>
+          </div>
+          <div className={styles.previewActions}>
+            <a
+              className={styles.iconButton}
+              href={`/api/files/download?path=${encodeURIComponent(item.path)}`}
+              title="다운로드"
+            >
+              <Download aria-hidden="true" />
+            </a>
+            <button
+              aria-label="미리보기 닫기"
+              className={styles.iconButton}
+              onClick={onClose}
+              type="button"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+        <div className={styles.previewContent}>
+          {kind === "image" ? (
+            // The source is an authenticated, same-origin streaming endpoint.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img alt={item.name} src={previewUrl} />
+          ) : kind === "audio" ? (
+            <audio controls src={previewUrl}>
+              브라우저가 오디오 미리보기를 지원하지 않습니다.
+            </audio>
+          ) : kind === "video" ? (
+            <video controls src={previewUrl}>
+              브라우저가 비디오 미리보기를 지원하지 않습니다.
+            </video>
+          ) : (
+            <iframe sandbox="" src={previewUrl} title={`${item.name} 미리보기`} />
+          )}
+        </div>
       </section>
     </div>
   );
@@ -330,52 +527,109 @@ function ArchiveManager({
   const [listing, setListing] = useState<ArchiveListing | null>(null);
   const [rootFolders, setRootFolders] = useState<ArchiveItem[]>([]);
   const [storageDriver, setStorageDriver] = useState<StorageDriver | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("files");
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
+  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{
+    item: ArchiveItem;
+    kind: PreviewKind;
+  } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const fileListRef = useRef<HTMLDivElement>(null);
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const loadListing = useCallback(async (nextPath: string) => {
-    try {
-      const nextListing = await apiRequest<ArchiveListing>(
-        `/api/files?path=${encodeURIComponent(nextPath)}`,
-      );
-      setError("");
-      setListing(nextListing);
-      setPath(nextListing.path);
-      if (nextListing.path === "") {
-        setRootFolders(
-          nextListing.items.filter((item) => item.type === "folder"),
+  const loadListing = useCallback(
+    async (nextPath: string, pushHistory = true) => {
+      try {
+        const nextListing = await apiRequest<ArchiveListing>(
+          `/api/files?path=${encodeURIComponent(nextPath)}`,
         );
+        setError("");
+        setListing(nextListing);
+        setPath(nextListing.path);
+        setViewMode("files");
+        setSelectedPaths(new Set());
+        setSelectionAnchor(null);
+        if (nextListing.path === "") {
+          setRootFolders(
+            nextListing.items.filter((item) => item.type === "folder"),
+          );
+        }
+        if (pushHistory) {
+          window.history.pushState(null, "", browseUrl(nextListing.path));
+        }
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "목록을 불러오지 못했습니다.",
+        );
+      }
+    },
+    [],
+  );
+
+  const loadTrash = useCallback(async (pushHistory = true) => {
+    try {
+      const trashListing = await apiRequest<ArchiveListing>("/api/trash");
+      setError("");
+      setListing(trashListing);
+      setPath("");
+      setViewMode("trash");
+      setSelectedPaths(new Set());
+      setSelectionAnchor(null);
+      if (pushHistory) {
+        window.history.pushState(null, "", "/trash");
       }
     } catch (loadError) {
       setError(
         loadError instanceof Error
           ? loadError.message
-          : "목록을 불러오지 못했습니다.",
+          : "휴지통을 불러오지 못했습니다.",
       );
     }
   }, []);
 
   useEffect(() => {
+    const loadCurrentLocation = () => {
+      const target = locationTarget();
+      if (target.mode === "trash") {
+        void loadTrash(false);
+      } else {
+        void loadListing(target.path, false);
+      }
+    };
+    loadCurrentLocation();
+    window.addEventListener("popstate", loadCurrentLocation);
+    return () => {
+      window.removeEventListener("popstate", loadCurrentLocation);
+    };
+  }, [loadListing, loadTrash]);
+
+  useEffect(() => {
     let active = true;
+    const target = locationTarget();
+    if (target.mode === "files" && target.path === "") {
+      return () => {
+        active = false;
+      };
+    }
     void apiRequest<ArchiveListing>("/api/files?path=")
-      .then((initialListing) => {
+      .then((rootListing) => {
         if (active) {
-          setListing(initialListing);
-          setPath(initialListing.path);
           setRootFolders(
-            initialListing.items.filter((item) => item.type === "folder"),
+            rootListing.items.filter((item) => item.type === "folder"),
           );
         }
       })
-      .catch((loadError: unknown) => {
-        if (active) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "목록을 불러오지 못했습니다.",
-          );
-        }
+      .catch(() => {
+        // Root shortcuts are optional; the current listing still reports errors.
       });
     return () => {
       active = false;
@@ -409,6 +663,35 @@ function ArchiveManager({
     ];
   }, [path]);
 
+  async function uploadFiles(
+    files: File[],
+    destinationPath = path,
+  ): Promise<void> {
+    if (
+      files.length === 0 ||
+      files.some((file) => !(file instanceof globalThis.File))
+    ) {
+      throw new Error("파일을 선택해 주세요.");
+    }
+    await Promise.all(
+      files.map(async (file) => {
+        const uploadUrl = new URL(
+          "/api/files/upload",
+          window.location.origin,
+        );
+        uploadUrl.searchParams.set("parentPath", destinationPath);
+        uploadUrl.searchParams.set("name", file.name);
+        await apiRequest(uploadUrl.toString(), {
+          method: "POST",
+          body: file,
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+          },
+        });
+      }),
+    );
+  }
+
   async function handleDialogSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dialog) {
@@ -433,33 +716,38 @@ function ArchiveManager({
           }),
         });
       } else if (dialog.type === "delete") {
-        await apiRequest(
-          `/api/files/delete?path=${encodeURIComponent(dialog.item.path)}`,
-          { method: "DELETE" },
+        await Promise.all(
+          dialog.items.map((item) =>
+            apiRequest(
+              `/api/files/delete?path=${encodeURIComponent(item.path)}`,
+              { method: "DELETE" },
+            ),
+          ),
         );
+      } else if (dialog.type === "empty-trash") {
+        await apiRequest("/api/trash", { method: "DELETE" });
       } else {
         const fileInput = event.currentTarget.elements.namedItem("file");
-        const file =
+        const files =
           fileInput instanceof HTMLInputElement
-            ? fileInput.files?.item(0)
-            : null;
-        if (!(file instanceof globalThis.File)) {
+            ? Array.from(fileInput.files ?? [])
+            : [];
+        if (
+          files.length === 0 ||
+          files.some((file) => !(file instanceof globalThis.File))
+        ) {
           throw new Error("파일을 선택해 주세요.");
         }
-        const uploadUrl = new URL("/api/files/upload", window.location.origin);
-        uploadUrl.searchParams.set("parentPath", path);
-        uploadUrl.searchParams.set("name", file.name);
-        await apiRequest(uploadUrl.toString(), {
-          method: "POST",
-          body: file,
-          headers: {
-            "Content-Type": file.type || "application/octet-stream",
-          },
-        });
+        await uploadFiles(files);
       }
 
       setDialog(null);
-      await loadListing(path);
+      setSelectedPaths(new Set());
+      if (viewMode === "trash") {
+        await loadTrash(false);
+      } else {
+        await loadListing(path, false);
+      }
     } catch (actionError) {
       setError(
         actionError instanceof Error
@@ -468,6 +756,221 @@ function ArchiveManager({
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleMoveItems(
+    paths: string[],
+    destinationParentPath: string,
+  ) {
+    const movablePaths = paths.filter(
+      (sourcePath) => sourcePath !== destinationParentPath,
+    );
+    if (movablePaths.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await Promise.all(
+        movablePaths.map((sourcePath) =>
+          apiRequest("/api/files/move", {
+            method: "PATCH",
+            body: JSON.stringify({
+              path: sourcePath,
+              destinationParentPath,
+            }),
+          }),
+        ),
+      );
+      setSelectedPaths(new Set());
+      await loadListing(path, false);
+    } catch (moveError) {
+      setError(
+        moveError instanceof Error
+          ? moveError.message
+          : "항목을 이동하지 못했습니다.",
+      );
+    } finally {
+      setBusy(false);
+      setDropTarget(null);
+    }
+  }
+
+  async function handleDroppedFiles(
+    files: File[],
+    destinationPath = path,
+  ) {
+    if (viewMode !== "files" || files.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await uploadFiles(files, destinationPath);
+      await loadListing(path, false);
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "파일을 업로드하지 못했습니다.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleItemClick(
+    event: MouseEvent<HTMLElement>,
+    item: ArchiveItem,
+    index: number,
+  ) {
+    if (event.shiftKey && selectionAnchor !== null) {
+      const start = Math.min(selectionAnchor, index);
+      const end = Math.max(selectionAnchor, index);
+      setSelectedPaths(
+        new Set(items.slice(start, end + 1).map((candidate) => candidate.path)),
+      );
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedPaths((current) => {
+        const next = new Set(current);
+        if (next.has(item.path)) {
+          next.delete(item.path);
+        } else {
+          next.add(item.path);
+        }
+        return next;
+      });
+    } else {
+      setSelectedPaths(new Set([item.path]));
+    }
+    setSelectionAnchor(index);
+  }
+
+  function handleItemOpen(item: ArchiveItem) {
+    if (viewMode === "trash") {
+      return;
+    }
+    if (item.type === "folder") {
+      void loadListing(item.path);
+      return;
+    }
+    const kind = getPreviewKind(item);
+    if (kind) {
+      setPreview({ item, kind });
+    } else {
+      setError("이 파일 형식은 브라우저 미리보기를 지원하지 않습니다.");
+    }
+  }
+
+  function handleDragStart(
+    event: DragEvent<HTMLElement>,
+    item: ArchiveItem,
+  ) {
+    if (viewMode !== "files") {
+      event.preventDefault();
+      return;
+    }
+    const dragPaths = selectedPaths.has(item.path)
+      ? [...selectedPaths]
+      : [item.path];
+    if (!selectedPaths.has(item.path)) {
+      setSelectedPaths(new Set([item.path]));
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "application/x-f-archive-paths",
+      JSON.stringify(dragPaths),
+    );
+  }
+
+  function draggedPaths(event: DragEvent<HTMLElement>): string[] {
+    try {
+      const value = JSON.parse(
+        event.dataTransfer.getData("application/x-f-archive-paths"),
+      ) as unknown;
+      return Array.isArray(value) &&
+        value.every((entry) => typeof entry === "string")
+        ? value
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (
+      event.button !== 0 ||
+      (event.target as HTMLElement).closest(
+        "[data-file-path], button, a, input",
+      )
+    ) {
+      return;
+    }
+    const container = fileListRef.current;
+    if (!container) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    selectionStartRef.current = { x: event.clientX, y: event.clientY };
+    if (!event.ctrlKey && !event.metaKey) {
+      setSelectedPaths(new Set());
+    }
+    const bounds = container.getBoundingClientRect();
+    setSelectionBox({
+      height: 0,
+      left: event.clientX - bounds.left + container.scrollLeft,
+      top: event.clientY - bounds.top + container.scrollTop,
+      width: 0,
+    });
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const start = selectionStartRef.current;
+    const container = fileListRef.current;
+    if (!start || !container) {
+      return;
+    }
+    const left = Math.min(start.x, event.clientX);
+    const right = Math.max(start.x, event.clientX);
+    const top = Math.min(start.y, event.clientY);
+    const bottom = Math.max(start.y, event.clientY);
+    const selected = new Set<string>();
+    container
+      .querySelectorAll<HTMLElement>("[data-file-path]")
+      .forEach((row) => {
+        const bounds = row.getBoundingClientRect();
+        if (
+          bounds.right >= left &&
+          bounds.left <= right &&
+          bounds.bottom >= top &&
+          bounds.top <= bottom
+        ) {
+          const selectedPath = row.dataset.filePath;
+          if (selectedPath) {
+            selected.add(selectedPath);
+          }
+        }
+      });
+    const containerBounds = container.getBoundingClientRect();
+    setSelectedPaths(selected);
+    setSelectionBox({
+      height: bottom - top,
+      left: left - containerBounds.left + container.scrollLeft,
+      top: top - containerBounds.top + container.scrollTop,
+      width: right - left,
+    });
+  }
+
+  function finishPointerSelection(event: PointerEvent<HTMLDivElement>) {
+    if (selectionStartRef.current) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      selectionStartRef.current = null;
+      setSelectionBox(null);
     }
   }
 
@@ -480,6 +983,7 @@ function ArchiveManager({
   }
 
   const items = listing?.items ?? [];
+  const selectedItems = items.filter((item) => selectedPaths.has(item.path));
 
   return (
     <main className={styles.appShell}>
@@ -495,7 +999,12 @@ function ArchiveManager({
         </div>
 
         <nav aria-label="아카이브 메뉴" className={styles.sideNav}>
-          <button className={styles.activeNav} onClick={() => loadListing("")}>
+          <button
+            className={
+              viewMode === "files" && path === "" ? styles.activeNav : undefined
+            }
+            onClick={() => loadListing("")}
+          >
             <FolderOpen aria-hidden="true" />
             모든 파일
           </button>
@@ -504,6 +1013,11 @@ function ArchiveManager({
               <div className={styles.navLabel}>바로가기</div>
               {rootFolders.map((folder) => (
                 <button
+                  className={
+                    viewMode === "files" && path === folder.path
+                      ? styles.activeNav
+                      : undefined
+                  }
                   key={folder.path}
                   onClick={() => loadListing(folder.path)}
                 >
@@ -513,6 +1027,14 @@ function ArchiveManager({
               ))}
             </>
           ) : null}
+          <div className={styles.navLabel}>관리</div>
+          <button
+            className={viewMode === "trash" ? styles.activeNav : undefined}
+            onClick={() => loadTrash()}
+          >
+            <Trash2 aria-hidden="true" />
+            휴지통
+          </button>
         </nav>
 
         <div className={styles.storageCard}>
@@ -552,42 +1074,102 @@ function ArchiveManager({
         <div className={styles.content}>
           <div className={styles.contentHeading}>
             <div>
-              <p className={styles.eyebrow}>PERSONAL ARCHIVE</p>
-              <h1>내 아카이브</h1>
-              <p>오래 간직할 파일과 기록을 정돈합니다.</p>
+              <p className={styles.eyebrow}>
+                {viewMode === "trash" ? "DELETED FILES" : "PERSONAL ARCHIVE"}
+              </p>
+              <h1>{viewMode === "trash" ? "휴지통" : "내 아카이브"}</h1>
+              <p>
+                {viewMode === "trash"
+                  ? "삭제한 파일과 폴더를 확인합니다."
+                  : "클릭, Shift/Ctrl 선택 또는 빈 공간 드래그로 항목을 선택하세요."}
+              </p>
             </div>
             <div className={styles.headingActions}>
-              <button
-                className={styles.secondaryButton}
-                onClick={() => setDialog({ type: "folder" })}
-              >
-                <Plus aria-hidden="true" />
-                새 폴더
-              </button>
-              <button
-                className={styles.primaryButton}
-                onClick={() => setDialog({ type: "upload" })}
-              >
-                <Upload aria-hidden="true" />
-                업로드
-              </button>
+              {viewMode === "files" ? (
+                <>
+                  <button
+                    className={styles.secondaryButton}
+                    onClick={() => loadTrash()}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    휴지통
+                  </button>
+                  <button
+                    className={styles.secondaryButton}
+                    onClick={() => setDialog({ type: "folder" })}
+                  >
+                    <Plus aria-hidden="true" />
+                    새 폴더
+                  </button>
+                  <button
+                    className={styles.primaryButton}
+                    onClick={() => setDialog({ type: "upload" })}
+                  >
+                    <Upload aria-hidden="true" />
+                    업로드
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className={styles.secondaryButton}
+                    onClick={() => loadListing("")}
+                  >
+                    <FolderOpen aria-hidden="true" />
+                    모든 파일
+                  </button>
+                  <button
+                    className={styles.dangerButton}
+                    disabled={items.length === 0}
+                    onClick={() => setDialog({ type: "empty-trash" })}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    휴지통 비우기
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
           <nav aria-label="현재 경로" className={styles.breadcrumbs}>
-            {breadcrumbs.map((crumb, index) => (
-              <span key={crumb.path || "root"}>
-                {index > 0 ? <ChevronRight aria-hidden="true" /> : null}
-                <button
-                  aria-current={
-                    index === breadcrumbs.length - 1 ? "page" : undefined
-                  }
-                  onClick={() => loadListing(crumb.path)}
-                >
-                  {crumb.name}
-                </button>
-              </span>
-            ))}
+            {viewMode === "trash" ? (
+              <>
+                <span>
+                  <button onClick={() => loadListing("")}>내 아카이브</button>
+                </span>
+                <span>
+                  <ChevronRight aria-hidden="true" />
+                  <button aria-current="page">휴지통</button>
+                </span>
+              </>
+            ) : (
+              breadcrumbs.map((crumb, index) => (
+                <span key={crumb.path || "root"}>
+                  {index > 0 ? <ChevronRight aria-hidden="true" /> : null}
+                  <button
+                    aria-current={
+                      index === breadcrumbs.length - 1 ? "page" : undefined
+                    }
+                    onDragOver={(event) => {
+                      if (
+                        event.dataTransfer.types.includes(
+                          "application/x-f-archive-paths",
+                        )
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void handleMoveItems(draggedPaths(event), crumb.path);
+                    }}
+                    onClick={() => loadListing(crumb.path)}
+                  >
+                    {crumb.name}
+                  </button>
+                </span>
+              ))
+            )}
           </nav>
 
           {error ? (
@@ -601,37 +1183,160 @@ function ArchiveManager({
 
           <section className={styles.filePanel} aria-label="파일 목록">
             <div className={styles.filePanelHeader}>
-              <span>{items.length}개 항목</span>
-              <span>이름순</span>
+              <span>
+                {items.length}개 항목
+                {selectedPaths.size > 0
+                  ? ` · ${selectedPaths.size}개 선택`
+                  : ""}
+              </span>
+              {viewMode === "files" && selectedItems.length > 0 ? (
+                <button
+                  className={styles.selectionAction}
+                  onClick={() =>
+                    setDialog({ type: "delete", items: selectedItems })
+                  }
+                  type="button"
+                >
+                  선택 항목을 휴지통으로
+                </button>
+              ) : (
+                <span>{viewMode === "trash" ? "삭제일순" : "이름순"}</span>
+              )}
             </div>
 
             <div className={styles.tableHeader} aria-hidden="true">
+              <span />
               <span>이름</span>
               <span>크기</span>
-              <span>수정일</span>
+              <span>{viewMode === "trash" ? "삭제일" : "수정일"}</span>
               <span>작업</span>
             </div>
 
-            <div className={styles.fileList}>
+            <div
+              className={styles.fileList}
+              data-testid="file-list"
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes("Files")) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }
+              }}
+              onDrop={(event) => {
+                if (event.dataTransfer.files.length > 0) {
+                  event.preventDefault();
+                  void handleDroppedFiles(
+                    Array.from(event.dataTransfer.files),
+                  );
+                }
+              }}
+              onPointerCancel={finishPointerSelection}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishPointerSelection}
+              ref={fileListRef}
+            >
               {!listing ? (
                 <div className={styles.emptyState}>목록을 불러오는 중…</div>
               ) : items.length === 0 ? (
                 <div className={styles.emptyState}>
-                  <FolderOpen aria-hidden="true" />
-                  <strong>이 폴더는 비어 있습니다.</strong>
-                  <span>파일을 올리거나 새 폴더를 만들어 보세요.</span>
+                  {viewMode === "trash" ? (
+                    <Trash2 aria-hidden="true" />
+                  ) : (
+                    <FolderOpen aria-hidden="true" />
+                  )}
+                  <strong>
+                    {viewMode === "trash"
+                      ? "휴지통이 비어 있습니다."
+                      : "이 폴더는 비어 있습니다."}
+                  </strong>
+                  <span>
+                    {viewMode === "trash"
+                      ? "삭제한 항목이 여기에 표시됩니다."
+                      : "파일을 끌어 놓거나 새 폴더를 만들어 보세요."}
+                  </span>
                 </div>
               ) : (
-                items.map((item) => (
-                  <article className={styles.fileRow} key={item.path}>
+                items.map((item, index) => (
+                  <article
+                    className={[
+                      styles.fileRow,
+                      selectedPaths.has(item.path)
+                        ? styles.fileRowSelected
+                        : "",
+                      dropTarget === item.path ? styles.fileRowDropTarget : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    data-file-path={item.path}
+                    draggable={viewMode === "files"}
+                    key={item.path}
+                    onClick={(event) => handleItemClick(event, item, index)}
+                    onDoubleClick={() => handleItemOpen(item)}
+                    onDragEnd={() => setDropTarget(null)}
+                    onDragEnter={(event) => {
+                      if (viewMode === "files" && item.type === "folder") {
+                        event.preventDefault();
+                        setDropTarget(item.path);
+                      }
+                    }}
+                    onDragOver={(event) => {
+                      if (viewMode === "files" && item.type === "folder") {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect =
+                          event.dataTransfer.files.length > 0
+                            ? "copy"
+                            : "move";
+                      }
+                    }}
+                    onDragStart={(event) => handleDragStart(event, item)}
+                    onDrop={(event) => {
+                      if (viewMode === "files" && item.type === "folder") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (event.dataTransfer.files.length > 0) {
+                          void handleDroppedFiles(
+                            Array.from(event.dataTransfer.files),
+                            item.path,
+                          );
+                        } else {
+                          void handleMoveItems(
+                            draggedPaths(event),
+                            item.path,
+                          );
+                        }
+                      }
+                    }}
+                  >
+                    <input
+                      aria-label={`${item.name} 선택`}
+                      checked={selectedPaths.has(item.path)}
+                      className={styles.selectionCheckbox}
+                      onChange={() => {
+                        setSelectedPaths((current) => {
+                          const next = new Set(current);
+                          if (next.has(item.path)) {
+                            next.delete(item.path);
+                          } else {
+                            next.add(item.path);
+                          }
+                          return next;
+                        });
+                        setSelectionAnchor(index);
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      type="checkbox"
+                    />
                     <button
                       className={styles.fileName}
-                      disabled={item.type !== "folder"}
-                      onClick={() =>
-                        item.type === "folder"
-                          ? loadListing(item.path)
-                          : undefined
-                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleItemClick(event, item, index);
+                      }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        handleItemOpen(item);
+                      }}
+                      type="button"
                     >
                       <span className={styles.fileIconBox}>
                         {getFileIcon(item)}
@@ -652,36 +1357,70 @@ function ArchiveManager({
                       {dateFormatter.format(new Date(item.modifiedAt))}
                     </time>
                     <div className={styles.rowActions}>
-                      {item.type === "file" ? (
+                      {viewMode === "files" &&
+                      item.type === "file" &&
+                      getPreviewKind(item) ? (
+                        <button
+                          aria-label={`${item.name} 미리보기`}
+                          className={styles.iconButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleItemOpen(item);
+                          }}
+                          title="미리보기"
+                          type="button"
+                        >
+                          <Eye aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {viewMode === "files" && item.type === "file" ? (
                         <a
                           aria-label={`${item.name} 다운로드`}
                           className={styles.iconButton}
                           href={`/api/files/download?path=${encodeURIComponent(item.path)}`}
+                          onClick={(event) => event.stopPropagation()}
                           title="다운로드"
                         >
                           <Download aria-hidden="true" />
                         </a>
                       ) : null}
-                      <button
-                        aria-label={`${item.name} 이름 변경`}
-                        className={styles.iconButton}
-                        onClick={() => setDialog({ type: "rename", item })}
-                        title="이름 변경"
-                      >
-                        <Pencil aria-hidden="true" />
-                      </button>
-                      <button
-                        aria-label={`${item.name} 삭제`}
-                        className={styles.iconButton}
-                        onClick={() => setDialog({ type: "delete", item })}
-                        title="삭제"
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
+                      {viewMode === "files" ? (
+                        <>
+                          <button
+                            aria-label={`${item.name} 이름 변경`}
+                            className={styles.iconButton}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDialog({ type: "rename", item });
+                            }}
+                            title="이름 변경"
+                          >
+                            <Pencil aria-hidden="true" />
+                          </button>
+                          <button
+                            aria-label={`${item.name} 휴지통으로 이동`}
+                            className={styles.iconButton}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDialog({ type: "delete", items: [item] });
+                            }}
+                            title="휴지통으로 이동"
+                          >
+                            <Trash2 aria-hidden="true" />
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   </article>
                 ))
               )}
+              {selectionBox ? (
+                <div
+                  aria-hidden="true"
+                  className={styles.selectionBox}
+                  style={selectionBox}
+                />
+              ) : null}
             </div>
           </section>
         </div>
@@ -693,6 +1432,13 @@ function ArchiveManager({
           dialog={dialog}
           onClose={() => setDialog(null)}
           onSubmit={handleDialogSubmit}
+        />
+      ) : null}
+      {preview ? (
+        <PreviewDialog
+          item={preview.item}
+          kind={preview.kind}
+          onClose={() => setPreview(null)}
         />
       ) : null}
     </main>

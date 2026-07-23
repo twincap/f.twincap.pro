@@ -19,7 +19,9 @@ export interface ArchiveStorage {
   createFolder(parentPath: string, name: string): Promise<ArchiveItem>;
   delete(path: string): Promise<void>;
   download(path: string): Promise<DownloadResult>;
+  emptyTrash(): Promise<void>;
   list(path: string): Promise<ArchiveListing>;
+  listTrash(): Promise<ArchiveListing>;
   move(path: string, destinationParentPath: string): Promise<ArchiveItem>;
   rename(path: string, newName: string): Promise<ArchiveItem>;
   upload(input: UploadInput): Promise<ArchiveItem>;

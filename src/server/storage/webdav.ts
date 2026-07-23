@@ -26,6 +26,18 @@ const PROPFIND_BODY = `<?xml version="1.0" encoding="utf-8"?>
     <d:getcontenttype />
   </d:prop>
 </d:propfind>`;
+const TRASH_PROPFIND_BODY = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">
+  <d:prop>
+    <d:resourcetype />
+    <d:getcontentlength />
+    <d:getlastmodified />
+    <d:getcontenttype />
+    <nc:trashbin-filename />
+    <nc:trashbin-original-location />
+    <nc:trashbin-deletion-time />
+  </d:prop>
+</d:propfind>`;
 
 type StreamingRequestInit = RequestInit & { duplex?: "half" };
 export type WebDavFetch = (
@@ -67,6 +79,17 @@ function validModifiedAt(value: unknown): string {
   return Number.isNaN(date.getTime())
     ? new Date(0).toISOString()
     : date.toISOString();
+}
+
+function validTrashModifiedAt(value: unknown): string {
+  const rawDate = asText(value);
+  if (rawDate && /^\d+$/.test(rawDate)) {
+    const seconds = Number(rawDate);
+    if (Number.isSafeInteger(seconds) && seconds >= 0) {
+      return new Date(seconds * 1000).toISOString();
+    }
+  }
+  return validModifiedAt(value);
 }
 
 function validSize(value: unknown): number {
@@ -142,6 +165,9 @@ export class WebDavArchiveStorage implements ArchiveStorage {
   private readonly baseUrl: URL;
   private readonly fetchImpl: WebDavFetch;
   private readonly rootPathname: string;
+  private readonly trashLocationPrefix: string | null;
+  private readonly trashBaseUrl: URL;
+  private readonly trashRootPathname: string;
 
   constructor(
     environment: NextcloudEnvironment,
@@ -157,6 +183,34 @@ export class WebDavArchiveStorage implements ArchiveStorage {
       environment.url.origin,
     );
     this.rootPathname = this.baseUrl.pathname.replace(/\/+$/, "");
+    const encodedUsername = encodeURIComponent(
+      validateArchiveName(environment.username),
+    );
+    this.trashBaseUrl = new URL(
+      `/remote.php/dav/trashbin/${encodedUsername}/trash/`,
+      environment.url.origin,
+    );
+    this.trashRootPathname = this.trashBaseUrl.pathname.replace(/\/+$/, "");
+    const filesRootPathname = `/remote.php/dav/files/${encodedUsername}`;
+    if (this.rootPathname === filesRootPathname) {
+      this.trashLocationPrefix = "";
+    } else if (this.rootPathname.startsWith(`${filesRootPathname}/`)) {
+      const relativeRoot = this.rootPathname.slice(
+        filesRootPathname.length + 1,
+      );
+      try {
+        this.trashLocationPrefix = normalizeArchivePath(
+          relativeRoot
+            .split("/")
+            .map((segment) => decodeURIComponent(segment))
+            .join("/"),
+        );
+      } catch {
+        this.trashLocationPrefix = null;
+      }
+    } else {
+      this.trashLocationPrefix = null;
+    }
   }
 
   private buildUrl(pathInput: string, collection = false): URL {
@@ -171,9 +225,17 @@ export class WebDavArchiveStorage implements ArchiveStorage {
   }
 
   private archivePathFromHref(href: string): string {
+    return this.pathFromHref(href, this.baseUrl, this.rootPathname);
+  }
+
+  private pathFromHref(
+    href: string,
+    baseUrl: URL,
+    rootPathname: string,
+  ): string {
     let hrefUrl: URL;
     try {
-      hrefUrl = new URL(href, this.baseUrl);
+      hrefUrl = new URL(href, baseUrl);
     } catch {
       throw new ArchiveStorageError(
         502,
@@ -184,11 +246,11 @@ export class WebDavArchiveStorage implements ArchiveStorage {
 
     const pathname = hrefUrl.pathname.replace(/\/+$/, "");
     if (
-      hrefUrl.origin !== this.baseUrl.origin ||
+      hrefUrl.origin !== baseUrl.origin ||
       hrefUrl.search !== "" ||
       hrefUrl.hash !== "" ||
-      (pathname !== this.rootPathname &&
-        !pathname.startsWith(`${this.rootPathname}/`))
+      (pathname !== rootPathname &&
+        !pathname.startsWith(`${rootPathname}/`))
     ) {
       throw new ArchiveStorageError(
         502,
@@ -197,11 +259,11 @@ export class WebDavArchiveStorage implements ArchiveStorage {
       );
     }
 
-    if (pathname === this.rootPathname) {
+    if (pathname === rootPathname) {
       return "";
     }
 
-    const encodedPath = pathname.slice(this.rootPathname.length + 1);
+    const encodedPath = pathname.slice(rootPathname.length + 1);
     try {
       const segments = encodedPath
         .split("/")
@@ -216,7 +278,14 @@ export class WebDavArchiveStorage implements ArchiveStorage {
     }
   }
 
-  private parseMultiStatus(xml: string): ArchiveItem[] {
+  private parseMultiStatus(
+    xml: string,
+    options?: {
+      baseUrl: URL;
+      rootPathname: string;
+      trash: boolean;
+    },
+  ): ArchiveItem[] {
     if (/<!DOCTYPE|<!ENTITY/i.test(xml)) {
       throw new ArchiveStorageError(
         502,
@@ -278,20 +347,69 @@ export class WebDavArchiveStorage implements ArchiveStorage {
         continue;
       }
 
-      const path = this.archivePathFromHref(href);
+      if (options?.trash) {
+        const originalLocation = asText(
+          properties["trashbin-original-location"],
+        );
+        if (!originalLocation || this.trashLocationPrefix === null) {
+          continue;
+        }
+        let safeOriginalLocation: string;
+        try {
+          safeOriginalLocation = normalizeArchivePath(originalLocation);
+        } catch {
+          throw new ArchiveStorageError(
+            502,
+            "webdav_invalid_response",
+            "Nextcloud에서 올바르지 않은 휴지통 원본 경로를 받았습니다.",
+          );
+        }
+        if (
+          this.trashLocationPrefix !== "" &&
+          safeOriginalLocation !== this.trashLocationPrefix &&
+          !isDescendantPath(
+            safeOriginalLocation,
+            this.trashLocationPrefix,
+          )
+        ) {
+          continue;
+        }
+      }
+
+      const path = options
+        ? this.pathFromHref(href, options.baseUrl, options.rootPathname)
+        : this.archivePathFromHref(href);
       const resourceType = asRecord(properties.resourcetype);
       const type =
         resourceType &&
         Object.prototype.hasOwnProperty.call(resourceType, "collection")
           ? "folder"
           : "file";
-      const name = path ? path.slice(path.lastIndexOf("/") + 1) : "";
+      const pathName = path ? path.slice(path.lastIndexOf("/") + 1) : "";
+      const trashName = options?.trash
+        ? asText(properties["trashbin-filename"])
+        : null;
+      let name = pathName;
+      if (trashName) {
+        try {
+          name = validateArchiveName(trashName);
+        } catch {
+          throw new ArchiveStorageError(
+            502,
+            "webdav_invalid_response",
+            "Nextcloud에서 올바르지 않은 휴지통 항목 이름을 받았습니다.",
+          );
+        }
+      }
       items.set(path, {
         path,
         name,
         type,
         size: type === "folder" ? null : validSize(properties.getcontentlength),
-        modifiedAt: validModifiedAt(properties.getlastmodified),
+        modifiedAt:
+          options?.trash && properties["trashbin-deletion-time"] !== undefined
+            ? validTrashModifiedAt(properties["trashbin-deletion-time"])
+            : validModifiedAt(properties.getlastmodified),
         ...(asText(properties.getcontenttype)
           ? { contentType: asText(properties.getcontenttype) ?? undefined }
           : {}),
@@ -453,6 +571,39 @@ export class WebDavArchiveStorage implements ArchiveStorage {
         return left.name.localeCompare(right.name, "ko");
       });
     return { path, items };
+  }
+
+  async listTrash(): Promise<ArchiveListing> {
+    const response = await this.request(this.trashBaseUrl, {
+      method: "PROPFIND",
+      headers: {
+        Accept: "application/xml, text/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+        Depth: "1",
+      },
+      body: TRASH_PROPFIND_BODY,
+    });
+    await this.expectStatus(response, [207]);
+    const xml = await readLimitedText(response, MAX_MULTISTATUS_BYTES);
+    const items = this.parseMultiStatus(xml, {
+      baseUrl: this.trashBaseUrl,
+      rootPathname: this.trashRootPathname,
+      trash: true,
+    })
+      .filter(
+        (item) => item.path !== "" && parentArchivePath(item.path) === "",
+      )
+      .sort((left, right) =>
+        right.modifiedAt.localeCompare(left.modifiedAt),
+      );
+    return { path: "", items };
+  }
+
+  async emptyTrash(): Promise<void> {
+    const response = await this.request(this.trashBaseUrl, {
+      method: "DELETE",
+    });
+    await this.expectStatus(response, [200, 204]);
   }
 
   async createFolder(parentInput: string, nameInput: string) {
