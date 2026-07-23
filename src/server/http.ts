@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { InvalidArchivePathError } from "@/lib/paths";
+import { getAppOrigin } from "@/server/env";
 import { ArchiveStorageError } from "@/server/storage/types";
 
 export class ApiRequestError extends Error {
@@ -17,10 +18,10 @@ export class ApiRequestError extends Error {
 export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
-  const requestOrigin = new URL(request.url).origin;
+  const expectedOrigin = getAppOrigin() ?? new URL(request.url).origin;
 
   if (
-    (origin && origin !== requestOrigin) ||
+    (origin && origin !== expectedOrigin) ||
     (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")
   ) {
     throw new ApiRequestError(403, "forbidden_origin", "요청을 확인할 수 없습니다.");

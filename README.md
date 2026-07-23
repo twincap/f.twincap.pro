@@ -43,6 +43,7 @@ npm run dev
 | `APP_USERNAME` | 아카이브 로그인 아이디 |
 | `APP_PASSWORD` | 아카이브 로그인 비밀번호 |
 | `SESSION_SECRET` | 세션 서명 키, 32자 이상 |
+| `APP_ORIGIN` | 브라우저가 접근하는 외부 origin (`https://f.twincap.pro`) |
 | `STORAGE_DRIVER` | 현재는 반드시 `mock` |
 | `MAX_UPLOAD_BYTES` | mock 업로드 크기 제한 |
 | `NEXTCLOUD_URL` | 다음 단계의 서버 전용 Nextcloud 주소 |
@@ -51,6 +52,12 @@ npm run dev
 | `NEXTCLOUD_WEBDAV_ROOT` | 다음 단계의 서버 전용 WebDAV 루트 |
 
 Nextcloud 관련 값에 `NEXT_PUBLIC_` 접두사를 붙이지 마세요.
+
+Cloudflare Tunnel 같은 리버스 프록시 환경에서는 `APP_ORIGIN`을 브라우저가
+접근하는 외부 origin으로 설정해야 합니다. 운영값은
+`https://f.twincap.pro`이며 path, query, fragment 없이 입력합니다. 서버는
+이 값을 Origin 검증 기준으로 사용하고 `x-forwarded-host`를 신뢰하지
+않습니다.
 
 ## Docker
 
