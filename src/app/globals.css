@@ -1,0 +1,55 @@
+:root {
+  --ink: #1d2420;
+  --paper: #f4f2ed;
+  --white: #fffdfa;
+  --line: #dedbd3;
+  --muted: #747b75;
+  --forest: #294c3b;
+  --forest-deep: #183327;
+  --sage: #dce7de;
+  --rust: #a94438;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", Inter, system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: #bdcfbf;
+  color: var(--forest-deep);
+}
