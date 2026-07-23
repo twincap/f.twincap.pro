@@ -1,14 +1,16 @@
 import type { ArchiveItem, ArchiveListing } from "@/lib/archive";
 
 export interface UploadInput {
-  bytes: Uint8Array;
+  body: ReadableStream<Uint8Array>;
   contentType: string;
   name: string;
   parentPath: string;
+  size?: number;
 }
 
 export interface DownloadResult {
-  bytes: Uint8Array;
+  body: ReadableStream<Uint8Array>;
+  contentLength?: number;
   contentType: string;
   name: string;
 }
@@ -18,6 +20,7 @@ export interface ArchiveStorage {
   delete(path: string): Promise<void>;
   download(path: string): Promise<DownloadResult>;
   list(path: string): Promise<ArchiveListing>;
+  move(path: string, destinationParentPath: string): Promise<ArchiveItem>;
   rename(path: string, newName: string): Promise<ArchiveItem>;
   upload(input: UploadInput): Promise<ArchiveItem>;
 }

@@ -7,6 +7,7 @@ import {
   toErrorResponse,
 } from "@/server/http";
 import { getArchiveStorage } from "@/server/storage";
+import { limitUploadStream } from "@/server/storage/streams";
 
 const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -21,40 +22,51 @@ export async function POST(request: Request) {
   try {
     requireApiSession(request);
     assertSameOrigin(request);
-    const contentLength = Number(request.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > getMaxUploadBytes()) {
-      throw new ApiRequestError(
-        413,
-        "upload_too_large",
-        "업로드 허용 크기를 초과했습니다.",
-      );
-    }
-
-    const formData = await request.formData();
-    const rawPath = formData.get("parentPath");
-    const file = formData.get("file");
-    if (typeof rawPath !== "string" || !(file instanceof File)) {
+    const requestUrl = new URL(request.url);
+    const parentPath = normalizeArchivePath(
+      requestUrl.searchParams.get("parentPath"),
+    );
+    const name = validateArchiveName(
+      String(requestUrl.searchParams.get("name") ?? ""),
+    );
+    const rawContentLength = request.headers.get("content-length");
+    const contentLength =
+      rawContentLength === null ? undefined : Number(rawContentLength);
+    if (
+      contentLength !== undefined &&
+      (!Number.isSafeInteger(contentLength) || contentLength < 0)
+    ) {
       throw new ApiRequestError(
         400,
         "invalid_upload",
         "업로드 요청이 올바르지 않습니다.",
       );
     }
-    if (file.size === 0 || file.size > getMaxUploadBytes()) {
+    if (
+      contentLength !== undefined &&
+      contentLength > getMaxUploadBytes()
+    ) {
       throw new ApiRequestError(
         413,
         "upload_too_large",
-        "비어 있거나 허용 크기를 초과한 파일입니다.",
+        "업로드 허용 크기를 초과했습니다.",
+      );
+    }
+    if (!request.body || contentLength === 0) {
+      throw new ApiRequestError(
+        400,
+        "invalid_upload",
+        "업로드 요청이 올바르지 않습니다.",
       );
     }
 
-    const parentPath = normalizeArchivePath(rawPath);
-    const name = validateArchiveName(file.name);
     const item = await getArchiveStorage().upload({
       parentPath,
       name,
-      contentType: file.type,
-      bytes: new Uint8Array(await file.arrayBuffer()),
+      contentType:
+        request.headers.get("content-type") ?? "application/octet-stream",
+      body: limitUploadStream(request.body, getMaxUploadBytes()),
+      ...(contentLength !== undefined ? { size: contentLength } : {}),
     });
     return jsonNoStore({ item }, { status: 201 });
   } catch (error) {

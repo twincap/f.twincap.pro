@@ -5,9 +5,8 @@
 This repository contains the private archive file-management website deployed
 at `f.twincap.pro`.
 
-The browser talks only to Next.js server API routes. Server routes will
-eventually talk to Nextcloud through WebDAV. The first phase uses mock storage
-only.
+The browser talks only to Next.js server API routes. Server routes use either
+the mock adapter or Nextcloud WebDAV through the `ArchiveStorage` interface.
 
 ## Required architecture
 

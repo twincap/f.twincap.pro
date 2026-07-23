@@ -414,12 +414,15 @@ function ArchiveManager({
         if (!(file instanceof File)) {
           throw new Error("파일을 선택해 주세요.");
         }
-        const uploadForm = new FormData();
-        uploadForm.set("parentPath", path);
-        uploadForm.set("file", file);
-        await apiRequest("/api/files/upload", {
+        const uploadUrl = new URL("/api/files/upload", window.location.origin);
+        uploadUrl.searchParams.set("parentPath", path);
+        uploadUrl.searchParams.set("name", file.name);
+        await apiRequest(uploadUrl.toString(), {
           method: "POST",
-          body: uploadForm,
+          body: file,
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+          },
         });
       }
 

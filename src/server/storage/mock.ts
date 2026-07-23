@@ -12,6 +12,10 @@ import {
   type DownloadResult,
   type UploadInput,
 } from "@/server/storage/types";
+import {
+  bytesToStream,
+  consumeStream,
+} from "@/server/storage/streams";
 
 const INITIAL_ITEMS: ArchiveItem[] = [
   {
@@ -127,6 +131,30 @@ function assertAvailable(path: string): void {
   }
 }
 
+function relocateItem(
+  path: string,
+  newPath: string,
+  newName: string,
+): ArchiveItem {
+  const affected = [...getItems().entries()].filter(
+    ([candidate]) => candidate === path || isDescendantPath(candidate, path),
+  );
+  for (const [oldPath] of affected) {
+    getItems().delete(oldPath);
+  }
+  for (const [oldPath, item] of affected) {
+    const suffix = oldPath.slice(path.length);
+    const movedPath = `${newPath}${suffix}`;
+    getItems().set(movedPath, {
+      ...item,
+      path: movedPath,
+      name: oldPath === path ? newName : item.name,
+      modifiedAt: new Date().toISOString(),
+    });
+  }
+  return cloneItem(requireExisting(newPath));
+}
+
 export class MockArchiveStorage implements ArchiveStorage {
   async list(pathInput: string): Promise<ArchiveListing> {
     const path = normalizeArchivePath(pathInput);
@@ -166,11 +194,12 @@ export class MockArchiveStorage implements ArchiveStorage {
     assertParentFolder(parentPath);
     const path = joinArchivePath(parentPath, name);
     assertAvailable(path);
+    const size = await consumeStream(input.body);
     const item: ArchiveItem = {
       path,
       name,
       type: "file",
-      size: input.bytes.byteLength,
+      size,
       modifiedAt: new Date().toISOString(),
       contentType: input.contentType || "application/octet-stream",
     };
@@ -190,24 +219,37 @@ export class MockArchiveStorage implements ArchiveStorage {
       return cloneItem(existing);
     }
     assertAvailable(newPath);
+    return relocateItem(path, newPath, newName);
+  }
 
-    const affected = [...getItems().entries()].filter(
-      ([candidate]) => candidate === path || isDescendantPath(candidate, path),
-    );
-    for (const [oldPath] of affected) {
-      getItems().delete(oldPath);
+  async move(
+    pathInput: string,
+    destinationParentInput: string,
+  ): Promise<ArchiveItem> {
+    const path = normalizeArchivePath(pathInput);
+    const destinationParentPath = normalizeArchivePath(destinationParentInput);
+    if (!path) {
+      throw new ArchiveStorageError(400, "root_protected", "루트는 이동할 수 없습니다.");
     }
-    for (const [oldPath, item] of affected) {
-      const suffix = oldPath.slice(path.length);
-      const movedPath = `${newPath}${suffix}`;
-      getItems().set(movedPath, {
-        ...item,
-        path: movedPath,
-        name: oldPath === path ? newName : item.name,
-        modifiedAt: new Date().toISOString(),
-      });
+    const existing = requireExisting(path);
+    assertParentFolder(destinationParentPath);
+    if (
+      existing.type === "folder" &&
+      (destinationParentPath === path ||
+        isDescendantPath(destinationParentPath, path))
+    ) {
+      throw new ArchiveStorageError(
+        400,
+        "invalid_destination",
+        "폴더를 자기 자신 안으로 이동할 수 없습니다.",
+      );
     }
-    return cloneItem(requireExisting(newPath));
+    const newPath = joinArchivePath(destinationParentPath, existing.name);
+    if (newPath === path) {
+      return cloneItem(existing);
+    }
+    assertAvailable(newPath);
+    return relocateItem(path, newPath, existing.name);
   }
 
   async delete(pathInput: string): Promise<void> {
@@ -230,8 +272,10 @@ export class MockArchiveStorage implements ArchiveStorage {
       throw new ArchiveStorageError(400, "not_a_file", "파일이 아닙니다.");
     }
     const message = `Mock download for ${item.name}\n`;
+    const bytes = new TextEncoder().encode(message);
     return {
-      bytes: new TextEncoder().encode(message),
+      body: bytesToStream(bytes),
+      contentLength: bytes.byteLength,
       contentType: item.contentType ?? "application/octet-stream",
       name: item.name,
     };

@@ -9,14 +9,16 @@ export async function GET(request: Request) {
     const requestUrl = new URL(request.url);
     const path = normalizeArchivePath(requestUrl.searchParams.get("path"));
     const result = await getArchiveStorage().download(path);
-    return new Response(Buffer.from(result.bytes), {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(result.name)}`,
-        "Content-Type": result.contentType,
-        "X-Content-Type-Options": "nosniff",
-      },
+    const headers = new Headers({
+      "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(result.name)}`,
+      "Content-Type": result.contentType,
+      "X-Content-Type-Options": "nosniff",
     });
+    if (result.contentLength !== undefined) {
+      headers.set("Content-Length", String(result.contentLength));
+    }
+    return new Response(result.body, { headers });
   } catch (error) {
     return toErrorResponse(error);
   }

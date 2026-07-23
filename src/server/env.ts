@@ -1,3 +1,5 @@
+import { validateArchiveName } from "@/lib/paths";
+
 export type StorageDriver = "mock" | "webdav";
 
 export interface NextcloudEnvironment {
@@ -57,10 +59,52 @@ export function getNextcloudEnvironment(): NextcloudEnvironment {
     throw new Error("Nextcloud server environment is incomplete.");
   }
 
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("NEXTCLOUD_URL must be an absolute http or https URL.");
+  }
+
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new Error(
+      "NEXTCLOUD_URL must contain only an http or https origin.",
+    );
+  }
+
+  if (
+    webdavRoot !== webdavRoot.trim() ||
+    !webdavRoot.startsWith("/") ||
+    webdavRoot.startsWith("//") ||
+    webdavRoot.includes("\\") ||
+    webdavRoot.includes("?") ||
+    webdavRoot.includes("#")
+  ) {
+    throw new Error("NEXTCLOUD_WEBDAV_ROOT must be an absolute URL path.");
+  }
+
+  const rawSegments = webdavRoot
+    .slice(1)
+    .replace(/\/$/, "")
+    .split("/");
+  if (rawSegments.length === 0 || rawSegments.some((segment) => !segment)) {
+    throw new Error("NEXTCLOUD_WEBDAV_ROOT contains an invalid path.");
+  }
+  const encodedRoot = `/${rawSegments
+    .map((segment) => encodeURIComponent(validateArchiveName(segment)))
+    .join("/")}`;
+
   return {
-    url: new URL(rawUrl),
+    url,
     username,
     appPassword,
-    webdavRoot,
+    webdavRoot: encodedRoot,
   };
 }

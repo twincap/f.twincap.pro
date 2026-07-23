@@ -1,6 +1,10 @@
-import { getStorageDriver } from "@/server/env";
+import {
+  getNextcloudEnvironment,
+  getStorageDriver,
+} from "@/server/env";
 import { MockArchiveStorage } from "@/server/storage/mock";
 import type { ArchiveStorage } from "@/server/storage/types";
+import { WebDavArchiveStorage } from "@/server/storage/webdav";
 
 const mockStorage = new MockArchiveStorage();
 
@@ -9,8 +13,5 @@ export function getArchiveStorage(): ArchiveStorage {
   if (driver === "mock") {
     return mockStorage;
   }
-
-  throw new Error(
-    "The WebDAV adapter is intentionally disabled during the mock phase.",
-  );
+  return new WebDavArchiveStorage(getNextcloudEnvironment());
 }
