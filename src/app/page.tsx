@@ -4,7 +4,7 @@ import {
   Archive,
   ChevronRight,
   Download,
-  File,
+  File as FileIcon,
   Folder,
   FolderOpen,
   HardDrive,
@@ -31,6 +31,8 @@ type AuthState =
   | { status: "checking" }
   | { status: "anonymous" }
   | { status: "authenticated"; user: SessionUser };
+
+type StorageDriver = "mock" | "webdav";
 
 type DialogState =
   | { type: "folder" }
@@ -69,7 +71,7 @@ function getFileIcon(item: ArchiveItem) {
   if (/\.(jpe?g|png|gif|webp|heic)$/i.test(item.name)) {
     return <ImageIcon className={styles.imageIcon} aria-hidden="true" />;
   }
-  return <File className={styles.fileIcon} aria-hidden="true" />;
+  return <FileIcon className={styles.fileIcon} aria-hidden="true" />;
 }
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -326,6 +328,8 @@ function ArchiveManager({
 }) {
   const [path, setPath] = useState("");
   const [listing, setListing] = useState<ArchiveListing | null>(null);
+  const [rootFolders, setRootFolders] = useState<ArchiveItem[]>([]);
+  const [storageDriver, setStorageDriver] = useState<StorageDriver | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -338,6 +342,11 @@ function ArchiveManager({
       setError("");
       setListing(nextListing);
       setPath(nextListing.path);
+      if (nextListing.path === "") {
+        setRootFolders(
+          nextListing.items.filter((item) => item.type === "folder"),
+        );
+      }
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -354,6 +363,9 @@ function ArchiveManager({
         if (active) {
           setListing(initialListing);
           setPath(initialListing.path);
+          setRootFolders(
+            initialListing.items.filter((item) => item.type === "folder"),
+          );
         }
       })
       .catch((loadError: unknown) => {
@@ -364,6 +376,22 @@ function ArchiveManager({
               : "목록을 불러오지 못했습니다.",
           );
         }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<{ driver: StorageDriver }>("/api/storage")
+      .then(({ driver }) => {
+        if (active) {
+          setStorageDriver(driver);
+        }
+      })
+      .catch(() => {
+        // Storage details stay hidden when the authenticated status check fails.
       });
     return () => {
       active = false;
@@ -410,8 +438,12 @@ function ArchiveManager({
           { method: "DELETE" },
         );
       } else {
-        const file = form.get("file");
-        if (!(file instanceof File)) {
+        const fileInput = event.currentTarget.elements.namedItem("file");
+        const file =
+          fileInput instanceof HTMLInputElement
+            ? fileInput.files?.item(0)
+            : null;
+        if (!(file instanceof globalThis.File)) {
           throw new Error("파일을 선택해 주세요.");
         }
         const uploadUrl = new URL("/api/files/upload", window.location.origin);
@@ -467,30 +499,33 @@ function ArchiveManager({
             <FolderOpen aria-hidden="true" />
             모든 파일
           </button>
-          <div className={styles.navLabel}>바로가기</div>
-          <button onClick={() => loadListing("기록")}>
-            <Folder aria-hidden="true" />
-            기록
-          </button>
-          <button onClick={() => loadListing("사진")}>
-            <Folder aria-hidden="true" />
-            사진
-          </button>
-          <button onClick={() => loadListing("프로젝트")}>
-            <Folder aria-hidden="true" />
-            프로젝트
-          </button>
+          {rootFolders.length > 0 ? (
+            <>
+              <div className={styles.navLabel}>바로가기</div>
+              {rootFolders.map((folder) => (
+                <button
+                  key={folder.path}
+                  onClick={() => loadListing(folder.path)}
+                >
+                  <Folder aria-hidden="true" />
+                  {folder.name}
+                </button>
+              ))}
+            </>
+          ) : null}
         </nav>
 
         <div className={styles.storageCard}>
           <div>
             <HardDrive aria-hidden="true" />
-            <span>Mock storage</span>
+            <span>
+              {storageDriver === "webdav"
+                ? "Nextcloud WebDAV"
+                : storageDriver === "mock"
+                  ? "Mock storage"
+                  : "저장소 확인 중"}
+            </span>
           </div>
-          <div className={styles.storageTrack}>
-            <span />
-          </div>
-          <p>WebDAV 연결 전 안전한 미리보기</p>
         </div>
       </aside>
 

@@ -373,28 +373,6 @@
   width: 15px;
 }
 
-.storageTrack {
-  background: #d8d9d4;
-  border-radius: 99px;
-  height: 4px;
-  margin: 14px 0 10px;
-  overflow: hidden;
-}
-
-.storageTrack span {
-  background: var(--forest);
-  border-radius: inherit;
-  display: block;
-  height: 100%;
-  width: 28%;
-}
-
-.storageCard p {
-  color: #8b8f8b;
-  font-size: 9px;
-  line-height: 1.4;
-}
-
 .workspace {
   min-width: 0;
 }

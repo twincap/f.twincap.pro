@@ -95,6 +95,7 @@ docker compose up --build -d
 | `POST` | `/api/auth/login` | 로그인 |
 | `POST` | `/api/auth/logout` | 로그아웃 |
 | `GET` | `/api/auth/session` | 세션 확인 |
+| `GET` | `/api/storage` | 인증된 세션에 저장소 driver 이름만 반환 |
 | `GET` | `/api/files?path=` | 폴더 목록 |
 | `POST` | `/api/files/upload` | 파일 업로드 |
 | `POST` | `/api/files/folders` | 폴더 생성 |
